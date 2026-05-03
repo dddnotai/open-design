@@ -1,16 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { EntryView } from './components/EntryView';
 import type { CreateInput } from './components/NewProjectPanel';
+import { PetOverlay } from './components/pet/PetOverlay';
+import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
-import { SettingsDialog } from './components/SettingsDialog';
+import { SettingsDialog, type SettingsSection } from './components/SettingsDialog';
 import {
   daemonIsLive,
+  fetchAppVersionInfo,
   fetchAgents,
   fetchDesignSystems,
+  fetchPromptTemplates,
   fetchSkills,
 } from './providers/registry';
 import { navigate, useRoute } from './router';
-import { loadConfig, saveConfig } from './state/config';
+import {
+  DEFAULT_PET,
+  hasAnyConfiguredProvider,
+  loadConfig,
+  saveConfig,
+  syncMediaProvidersToDaemon,
+} from './state/config';
 import {
   createProject,
   deleteProject as deleteProjectApi,
@@ -22,9 +32,11 @@ import {
 import type {
   AgentInfo,
   AppConfig,
+  AppVersionInfo,
   DesignSystemSummary,
   Project,
   ProjectTemplate,
+  PromptTemplateSummary,
   SkillSummary,
 } from './types';
 
@@ -32,17 +44,35 @@ export function App() {
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(
+    undefined,
+  );
   const [daemonLive, setDaemonLive] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [designSystems, setDesignSystems] = useState<DesignSystemSummary[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplateSummary[]>([]);
+  const [appVersionInfo, setAppVersionInfo] = useState<AppVersionInfo | null>(null);
   // Goes false once the bootstrap effect has finished its initial round of
   // fetches. The entry view uses this to show shimmer / skeleton states
   // instead of an "empty" page that flickers before data lands.
   const [bootstrapping, setBootstrapping] = useState(true);
   const route = useRoute();
+
+  // Sync theme preference to the <html> element so CSS variables pick it up.
+  // useLayoutEffect (vs useEffect) fires before the browser paints, so a
+  // live theme switch in Settings applies atomically — no 1-frame flash of
+  // the old theme. Safe here because the component tree is ssr:false.
+  useLayoutEffect(() => {
+    const theme = config.theme ?? 'system';
+    if (theme === 'system') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+  }, [config.theme]);
 
   // Bootstrap — detect daemon, load pickers, seed sensible defaults.
   useEffect(() => {
@@ -51,7 +81,7 @@ export function App() {
       const alive = await daemonIsLive();
       if (cancelled) return;
       setDaemonLive(alive);
-      const [agentList, skillList, dsList, projectList, templateList] =
+      const [agentList, skillList, dsList, projectList, templateList, promptTemplateList, versionInfo] =
         await Promise.all([
           alive ? fetchAgents() : Promise.resolve([] as AgentInfo[]),
           alive ? fetchSkills() : Promise.resolve([] as SkillSummary[]),
@@ -60,6 +90,8 @@ export function App() {
             : Promise.resolve([] as DesignSystemSummary[]),
           alive ? listProjects() : Promise.resolve([] as Project[]),
           alive ? listTemplates() : Promise.resolve([] as ProjectTemplate[]),
+          alive ? fetchPromptTemplates() : Promise.resolve([] as PromptTemplateSummary[]),
+          alive ? fetchAppVersionInfo() : Promise.resolve(null),
         ]);
       if (cancelled) return;
       setAgents(agentList);
@@ -67,6 +99,8 @@ export function App() {
       setDesignSystems(dsList);
       setProjects(projectList);
       setTemplates(templateList);
+      setPromptTemplates(promptTemplateList);
+      setAppVersionInfo(versionInfo);
 
       setConfig((prev) => {
         const next = { ...prev };
@@ -83,6 +117,9 @@ export function App() {
           next.mode = 'api';
         }
         saveConfig(next);
+        if (alive && hasAnyConfiguredProvider(next.mediaProviders)) {
+          void syncMediaProvidersToDaemon(next.mediaProviders);
+        }
 
         // Pop the onboarding modal only on the first run. Once the user has
         // saved or skipped past it once, we trust their stored config and
@@ -98,6 +135,34 @@ export function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // One-shot self-healing migration for pets adopted before the
+  // overlay learned atlas-row switching. If the stored pet is a
+  // custom / codex pet whose imageUrl is a single-row strip
+  // (no atlas), we silently re-download the full spritesheet so
+  // hover, drag, and idle-ambient variety all light up on next render.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const upgraded = await migrateCustomPetAtlas(config);
+      if (!upgraded || cancelled) return;
+      setConfig((prev) => {
+        if (!prev.pet) return prev;
+        const next: AppConfig = {
+          ...prev,
+          pet: { ...prev.pet, custom: upgraded },
+        };
+        saveConfig(next);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Snapshot the config at mount; migration is one-shot per session
+    // and should not re-run every time config changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshProjects = useCallback(async () => {
@@ -116,6 +181,7 @@ export function App() {
     // configuration, so future page loads can skip the auto-popup.
     const withOnboarding: AppConfig = { ...next, onboardingCompleted: true };
     saveConfig(withOnboarding);
+    void syncMediaProvidersToDaemon(withOnboarding.mediaProviders, { force: true });
     setConfig(withOnboarding);
     setSettingsOpen(false);
   }, []);
@@ -270,7 +336,54 @@ export function App() {
 
   const openSettings = useCallback(() => {
     setSettingsWelcome(false);
+    setSettingsSection(undefined);
     setSettingsOpen(true);
+  }, []);
+
+  const openPetSettings = useCallback(() => {
+    setSettingsWelcome(false);
+    setSettingsSection('pet');
+    setSettingsOpen(true);
+  }, []);
+
+  // Explicit enabled toggle — true = wake, false = tuck. Persists to
+  // localStorage so the overlay state survives across reloads. We keep
+  // `adopted` untouched so the entry-view CTA does not regress to
+  // "adopt me" once the user has already chosen.
+  const handleSetPetEnabled = useCallback((enabled: boolean) => {
+    setConfig((curr) => {
+      const prev = curr.pet ?? DEFAULT_PET;
+      const next: AppConfig = { ...curr, pet: { ...prev, enabled } };
+      saveConfig(next);
+      return next;
+    });
+  }, []);
+
+  const handleTuckPet = useCallback(() => handleSetPetEnabled(false), [handleSetPetEnabled]);
+
+  // Toggle wake/tuck — used by the pet rail and the composer button.
+  const handleTogglePet = useCallback(() => {
+    setConfig((curr) => {
+      const prev = curr.pet ?? DEFAULT_PET;
+      const next: AppConfig = { ...curr, pet: { ...prev, enabled: !prev.enabled } };
+      saveConfig(next);
+      return next;
+    });
+  }, []);
+
+  // Inline adopt — the right-hand pet rail and the composer's pet menu
+  // both call this to switch pets without bouncing the user into
+  // Settings. It always wakes the overlay so the change is visible.
+  const handleAdoptPet = useCallback((petId: string) => {
+    setConfig((curr) => {
+      const prev = curr.pet ?? DEFAULT_PET;
+      const next: AppConfig = {
+        ...curr,
+        pet: { ...prev, adopted: true, enabled: true, petId },
+      };
+      saveConfig(next);
+      return next;
+    });
   }, []);
 
   // When the user lands on the entry view (route.kind === 'home'), pull
@@ -299,6 +412,9 @@ export function App() {
           onAgentModelChange={handleAgentModelChange}
           onRefreshAgents={refreshAgents}
           onOpenSettings={openSettings}
+          onAdoptPetInline={handleAdoptPet}
+          onTogglePet={handleTogglePet}
+          onOpenPetSettings={openPetSettings}
           onBack={handleBack}
           onClearPendingPrompt={handleClearPendingPrompt}
           onTouchProject={handleTouchProject}
@@ -311,6 +427,7 @@ export function App() {
           designSystems={designSystems}
           projects={projects}
           templates={templates}
+          promptTemplates={promptTemplates}
           defaultDesignSystemId={config.designSystemId}
           config={config}
           agents={agents}
@@ -321,14 +438,24 @@ export function App() {
           onDeleteProject={handleDeleteProject}
           onChangeDefaultDesignSystem={handleChangeDefaultDesignSystem}
           onOpenSettings={openSettings}
+          onAdoptPet={openPetSettings}
+          onAdoptPetInline={handleAdoptPet}
+          onTogglePet={handleTogglePet}
         />
       )}
+      <PetOverlay
+        pet={config.pet?.enabled ? config.pet : undefined}
+        onTuck={handleTuckPet}
+        onOpenSettings={openPetSettings}
+      />
       {settingsOpen ? (
         <SettingsDialog
           initial={config}
           agents={agents}
           daemonLive={daemonLive}
+          appVersionInfo={appVersionInfo}
           welcome={settingsWelcome}
+          defaultSection={settingsSection}
           onSave={handleConfigSave}
           onClose={() => {
             // Dismissing the welcome modal (Skip for now / backdrop click)

@@ -6,6 +6,7 @@ type IconName =
   | 'attach'
   | 'check'
   | 'chevron-down'
+  | 'chevron-left'
   | 'chevron-right'
   | 'close'
   | 'copy'
@@ -21,6 +22,7 @@ type IconName =
   | 'history'
   | 'image'
   | 'import'
+  | 'kanban'
   | 'languages'
   | 'link'
   | 'mic'
@@ -39,6 +41,7 @@ type IconName =
   | 'spinner'
   | 'sparkles'
   | 'stop'
+  | 'sun-moon'
   | 'tweaks'
   | 'upload'
   | 'zoom-in'
@@ -100,6 +103,12 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
       return (
         <svg {...common}>
           <path d="m6 9 6 6 6-6" />
+        </svg>
+      );
+    case 'chevron-left':
+      return (
+        <svg {...common}>
+          <path d="m15 18-6-6 6-6" />
         </svg>
       );
     case 'chevron-right':
@@ -210,6 +219,14 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <path d="m17 8-5-5-5 5" />
           <path d="M12 3v12" />
+        </svg>
+      );
+    case 'kanban':
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="5" height="16" rx="1" />
+          <rect x="10" y="4" width="5" height="10" rx="1" />
+          <rect x="17" y="4" width="4" height="13" rx="1" />
         </svg>
       );
     case 'languages':
@@ -351,6 +368,20 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
       return (
         <svg {...common}>
           <rect x="6" y="6" width="12" height="12" rx="1.5" />
+        </svg>
+      );
+    case 'sun-moon':
+      return (
+        <svg {...common}>
+          <path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4" />
+          <path d="M12 2v2" />
+          <path d="M12 20v2" />
+          <path d="m4.9 4.9 1.4 1.4" />
+          <path d="m17.7 17.7 1.4 1.4" />
+          <path d="M2 12h2" />
+          <path d="M20 12h2" />
+          <path d="m6.3 17.7-1.4 1.4" />
+          <path d="m19.1 4.9-1.4 1.4" />
         </svg>
       );
     case 'tweaks':

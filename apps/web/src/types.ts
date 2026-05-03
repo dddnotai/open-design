@@ -1,6 +1,46 @@
-import type { ArtifactKind, ArtifactManifest } from './artifacts/types';
+import type {
+  AgentInfo,
+  AppVersionInfo,
+  AppVersionResponse,
+  AudioKind,
+  ChatAttachment,
+  ChatCommentAttachment,
+  ChatMessage,
+  Conversation,
+  DeployConfigResponse,
+  DeployProjectFileResponse,
+  DesignSystemDetail,
+  DesignSystemSummary,
+  MediaAspect,
+  ProjectDeploymentsResponse,
+  PersistedAgentEvent,
+  Project,
+  PreviewComment,
+  PreviewCommentStatus,
+  PreviewCommentTarget,
+  PreviewCommentUpsertRequest,
+  ProjectDisplayStatus,
+  ProjectFile,
+  ProjectFileKind,
+  ProjectKind,
+  ProjectMetadata,
+  ProjectTemplate,
+  CodexPetSummary,
+  CodexPetsResponse,
+  SyncCommunityPetsRequest,
+  SyncCommunityPetsResponse,
+  SkillDetail,
+  SkillSummary,
+  UpdateDeployConfigRequest,
+} from '@open-design/contracts';
 
 export type ExecMode = 'daemon' | 'api';
+export type ApiProtocol = 'anthropic' | 'openai';
+
+export interface MediaProviderCredentials {
+  apiKey: string;
+  baseUrl: string;
+}
 
 // Per-CLI model + reasoning the user picked in the model menu. Each agent
 // keeps its own slot so flipping between Codex and Gemini doesn't reset the
@@ -11,63 +51,123 @@ export interface AgentModelChoice {
   reasoning?: string;
 }
 
+export type AppTheme = 'system' | 'light' | 'dark';
+
+// One animation row inside a pet's sprite atlas. Mirrors the Codex
+// hatch-pet `animation-rows.md` reference — `id` lets the overlay map
+// interaction states (idle / hover / drag direction / waiting) to the
+// correct row regardless of how many rows a particular pet ships.
+export interface PetAtlasRowDef {
+  // Row index in the atlas, top to bottom.
+  index: number;
+  // Stable id used by the interaction state machine and i18n keys.
+  // Matches the canonical Codex row ids: 'idle', 'running-right', etc.
+  id: string;
+  // Number of leading frames the row uses. The remaining cells in the
+  // row are expected to be transparent / empty.
+  frames: number;
+  // Frames-per-second the row plays at. Per-row tuning lets idle stay
+  // calm while running-* / jumping feel snappy.
+  fps: number;
+}
+
+// Sprite atlas layout — when present on `PetCustom`, `imageUrl` is the
+// full grid (cols × rows) instead of a single horizontal strip. The
+// overlay then picks one row to render based on user interaction.
+export interface PetAtlasLayout {
+  cols: number;
+  rows: number;
+  // Per-row playback definitions. Order matches the row index.
+  rowsDef: PetAtlasRowDef[];
+}
+
+// User-tunable companion that floats over the workspace. The full catalog
+// lives in `components/pet/pets.ts`; this shape is what gets persisted to
+// localStorage so we can roundtrip a customized pet across reloads.
+export interface PetCustom {
+  // Display name shown in the overlay tooltip and settings card.
+  name: string;
+  // Single emoji or 1–2 char glyph rendered as the sprite. We render text,
+  // not an image, so any user keyboard input works without uploads.
+  glyph: string;
+  // Hex color used as the overlay halo accent.
+  accent: string;
+  // Short greeting line shown in the speech bubble on hover / first wake.
+  greeting: string;
+  // Optional uploaded sprite. Stored as a base64 data URL so it survives
+  // localStorage roundtrips without depending on daemon storage. When
+  // present, the overlay / rail / settings render the image instead of
+  // the text glyph. Cleared when the user picks "Remove image".
+  imageUrl?: string;
+  // Legacy single-row spritesheet config — when `frames > 1` we treat
+  // `imageUrl` as a horizontal strip of `frames` equally-sized cells and
+  // step through them at `fps` frames per second using a CSS `steps()`
+  // animation, matching the codex-pets-react sheet shape (e.g.
+  // tater/spritesheet). `frames === 1` (default) renders the image as a
+  // single static cell with the same gentle float animation as the
+  // emoji glyph. Ignored when `atlas` is set.
+  frames?: number;
+  fps?: number;
+  // Optional sprite atlas layout. When present, `imageUrl` is the full
+  // atlas grid and the overlay renders the active row chosen by the
+  // interaction state machine (idle / hover → wave / drag → run / etc.).
+  atlas?: PetAtlasLayout;
+}
+
+export interface PetConfig {
+  // True once the user has explicitly picked a pet (built-in or custom).
+  // Until then, the entry view shows an "adopt" callout to drive discovery.
+  adopted: boolean;
+  // Floating overlay visibility — the wake/tuck toggle lives in Settings
+  // and on the overlay itself. Defaults to true after adoption.
+  enabled: boolean;
+  // 'custom' or a built-in id from `BUILT_IN_PETS`. We tolerate unknown ids
+  // (e.g. older builds) and fall back to the first built-in.
+  petId: string;
+  // Free-form custom pet definition. Always present so the customize panel
+  // has stable state to bind against, even when a built-in is active.
+  custom: PetCustom;
+}
+
 export interface AppConfig {
   mode: ExecMode;
   apiKey: string;
   baseUrl: string;
   model: string;
+  apiProtocol?: ApiProtocol;
+  /** Internal config schema/migration version for localStorage upgrades. */
+  configMigrationVersion?: number;
+  /** Base URL of the selected known provider; cleared once the user customizes provider fields. */
+  apiProviderBaseUrl?: string | null;
   agentId: string | null;
   skillId: string | null;
   designSystemId: string | null;
+  theme?: AppTheme;
   // True once the user has been through the welcome onboarding modal at
   // least once (saved or skipped). Bootstrap skips the auto-popup when
   // this is set so refreshing the page doesn't re-prompt.
   onboardingCompleted?: boolean;
+  mediaProviders?: Record<string, MediaProviderCredentials>;
   // Per-CLI model picker state, keyed by agent id (e.g. `gemini`, `codex`).
   // Pre-existing configs without this field fall through to the agent's
   // declared default.
   agentModels?: Record<string, AgentModelChoice>;
+  // Caps the upstream completion length in API mode. Defaults to 8192 when
+  // unset; raise it for providers (e.g. MiMo) that allow longer responses.
+  maxTokens?: number;
+  // Optional Codex-style animated companion. Older configs that pre-date
+  // the feature land at `undefined`, which the loader normalizes to a
+  // safe default (un-adopted, hidden until the user opts in).
+  pet?: PetConfig;
 }
 
-export type AgentEvent =
-  | { kind: 'status'; label: string; detail?: string | undefined }
-  | { kind: 'text'; text: string }
-  | { kind: 'thinking'; text: string }
-  | { kind: 'tool_use'; id: string; name: string; input: unknown }
-  | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }
-  | { kind: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number; durationMs?: number }
-  | { kind: 'raw'; line: string };
+export type AgentEvent = PersistedAgentEvent;
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  agentId?: string;
-  agentName?: string;
-  events?: AgentEvent[];
-  startedAt?: number;
-  endedAt?: number;
-  // Files staged by the user on this turn (uploaded into the project
-  // folder). Persisted on the message so re-renders show the same chips.
-  attachments?: ChatAttachment[];
-  // Files that appeared in the project folder during this assistant turn.
-  // Rendered as download / open chips at the end of the message so the
-  // user can grab a generated artifact (.pptx, .zip, etc.) in one click.
-  producedFiles?: ProjectFile[];
-}
-
-// Reference to a file that lives in the active project folder. The user
-// stages these by paste / drop / picker / @-mention; the daemon receives
-// `path` on the chat call and the agent reads them from cwd.
-export interface ChatAttachment {
-  path: string;
-  name: string;
-  kind: 'image' | 'file';
-  size?: number;
-}
+export type { ChatAttachment, ChatCommentAttachment, ChatMessage };
 
 export interface Artifact {
   identifier: string;
+  artifactType?: string;
   title: string;
   html: string;
   savedUrl?: string;
@@ -85,171 +185,64 @@ export interface AgentModelOption {
   label: string;
 }
 
-export interface AgentInfo {
-  id: string;
-  name: string;
-  bin: string;
-  available: boolean;
-  path?: string;
-  version?: string | null;
-  // Models surfaced in the model picker for this CLI. The first entry is
-  // treated as the default (typically the synthetic `'default'` option,
-  // meaning "let the CLI use whatever's in its own config").
-  models?: AgentModelOption[];
-  // Reasoning-effort presets — currently only Codex exposes this.
-  reasoningOptions?: AgentModelOption[];
+export type Surface = 'web' | 'image' | 'video' | 'audio';
+
+export interface PromptTemplateSource {
+  repo: string;
+  license: string;
+  author?: string;
+  url?: string;
 }
 
-export interface SkillSummary {
+export interface PromptTemplateSummary {
   id: string;
-  name: string;
-  description: string;
-  triggers: string[];
-  mode: 'prototype' | 'deck' | 'template' | 'design-system';
-  platform?: 'desktop' | 'mobile' | null;
-  scenario?: string | null;
-  previewType: string;
-  designSystemRequired: boolean;
-  defaultFor: string[];
-  upstream: string | null;
-  /** Lower number = higher priority in the Examples gallery. `null` keeps
-   *  the skill in its natural alphabetical position below all featured
-   *  entries. Set via `od.featured` in the SKILL.md frontmatter. */
-  featured?: number | null;
-  /** Optional metadata hints, parsed from `od.fidelity`,
-   *  `od.speaker_notes`, and `od.animations` in SKILL.md. Used by the
-   *  Examples gallery's "Use this prompt" fast-create path to mirror the
-   *  shipped `example.html` (e.g. wireframe-sketch declares
-   *  `fidelity: wireframe`). Missing hints fall back to the same defaults
-   *  the new-project form would apply. */
-  fidelity?: 'wireframe' | 'high-fidelity' | null;
-  speakerNotes?: boolean | null;
-  animations?: boolean | null;
-  hasBody: boolean;
-  examplePrompt: string;
-}
-
-export interface SkillDetail extends SkillSummary {
-  body: string;
-}
-
-export interface DesignSystemSummary {
-  id: string;
+  surface: 'image' | 'video';
   title: string;
-  category: string;
   summary: string;
-  /** 4 representative hex strings extracted from DESIGN.md: [bg, support, fg, accent].
-   *  Empty when DESIGN.md doesn't expose its tokens in the bold-and-hex format. */
-  swatches?: string[];
+  category: string;
+  tags?: string[];
+  model?: string;
+  aspect?: MediaAspect;
+  previewImageUrl?: string;
+  previewVideoUrl?: string;
+  source: PromptTemplateSource;
 }
 
-export interface DesignSystemDetail extends DesignSystemSummary {
-  body: string;
+export interface PromptTemplateDetail extends PromptTemplateSummary {
+  prompt: string;
 }
 
-export type ProjectFileKind =
-  | 'html'
-  | 'image'
-  | 'sketch'
-  | 'text'
-  | 'code'
-  | 'pdf'
-  | 'document'
-  | 'presentation'
-  | 'spreadsheet'
-  | 'binary';
-
-export interface ProjectFile {
-  name: string;
-  // Project-relative path. Today the project folder is flat so `path`
-  // equals `name` for every file — but components that want to think in
-  // path terms (the @-mention picker, the staged-attachment chips) can
-  // read this without caring whether subdirs exist.
-  path?: string;
-  // Discriminator for code that wants to filter files vs dirs in a tree
-  // listing. The current listing is files-only; we always set this to
-  // 'file' so the discriminator is meaningful.
-  type?: 'file' | 'dir';
-  size: number;
-  mtime: number;
-  kind: ProjectFileKind;
-  mime: string;
-  artifactKind?: ArtifactKind;
-  artifactManifest?: ArtifactManifest;
-}
-
-// Per-project metadata captured at creation time. The agent reads this
-// during chat (via the system prompt) and the question-form re-asks for
-// any field that's missing. Each `kind` carries a different shape.
-export type ProjectKind = 'prototype' | 'deck' | 'template' | 'other';
-
-export interface ProjectMetadata {
-  kind: ProjectKind;
-  // Prototype: 'wireframe' | 'high-fidelity'. Drives the visual ambition.
-  fidelity?: 'wireframe' | 'high-fidelity';
-  // Slide deck: whether the user wants speaker notes (less text per slide).
-  speakerNotes?: boolean;
-  // Template: whether motion/animation should be part of the design.
-  // Defaults `false` so a static template stays static unless asked.
-  animations?: boolean;
-  // Template: id of the user-saved template chosen at creation time.
-  // Only set on `kind === 'template'` projects (the other kinds dropped
-  // template selection entirely). The built-in 'animation' starter no
-  // longer ships — every template here is user-created via Share menu.
-  templateId?: string;
-  // Template: human-readable label of the source template, kept separate
-  // from `templateId` so the agent surface can name it without re-fetching.
-  templateLabel?: string;
-  // Multi-select design-system "inspirations". The first pick still goes to
-  // `Project.designSystemId` (the primary system that controls tokens); any
-  // additional ids land here and are passed to the agent as references the
-  // generated artifact should *also* draw from. Empty / undefined when the
-  // user stayed in single-select mode.
-  inspirationDesignSystemIds?: string[];
-  // Imported static-site projects, currently used for Claude Design ZIPs.
-  importedFrom?: 'claude-design' | string;
-  entryFile?: string;
-  sourceFileName?: string;
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  skillId: string | null;
-  designSystemId: string | null;
-  createdAt: number;
-  updatedAt: number;
-  // The prompt that should be prefilled into the chat composer when the
-  // project is opened. Cleared the first time the project is opened so it
-  // doesn't keep re-populating on subsequent visits.
-  pendingPrompt?: string;
-  // Optional structured metadata captured by the new-project panel. The
-  // shape varies by `kind`. Older projects created before this field
-  // existed will have it `undefined`.
-  metadata?: ProjectMetadata;
-}
-
-export interface ProjectTemplate {
-  id: string;
-  name: string;
-  // Source project the template was captured from (so we can show "based
-  // on …" in the picker). Optional because some templates are seeded.
-  sourceProjectId?: string;
-  // Snapshot of HTML files at the moment the template was saved. Each
-  // entry is a basename → text content pair.
-  files: Array<{ name: string; content: string }>;
-  // Free-form description shown in the picker.
-  description?: string;
-  createdAt: number;
-}
-
-export interface Conversation {
-  id: string;
-  projectId: string;
-  title: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
+export type {
+  AgentInfo,
+  AppVersionInfo,
+  AppVersionResponse,
+  AudioKind,
+  Conversation,
+  DeployConfigResponse,
+  DeployProjectFileResponse,
+  DesignSystemDetail,
+  DesignSystemSummary,
+  MediaAspect,
+  ProjectDeploymentsResponse,
+  Project,
+  PreviewComment,
+  PreviewCommentStatus,
+  PreviewCommentTarget,
+  PreviewCommentUpsertRequest,
+  ProjectDisplayStatus,
+  ProjectFile,
+  ProjectFileKind,
+  ProjectKind,
+  ProjectMetadata,
+  ProjectTemplate,
+  CodexPetSummary,
+  CodexPetsResponse,
+  SyncCommunityPetsRequest,
+  SyncCommunityPetsResponse,
+  SkillDetail,
+  SkillSummary,
+  UpdateDeployConfigRequest,
+};
 
 export interface OpenTabsState {
   tabs: string[];

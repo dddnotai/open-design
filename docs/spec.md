@@ -29,8 +29,8 @@ Other docs:
 
 | # | Bet | [Anthropic Claude Design][cd] | [Open CoDesign][ocod] | OD |
 |---|---|---|---|---|
-| 1 | Where the product runs | claude.ai only | Local Electron app | **Next.js web app + local daemon** — `pnpm dev:all`, Vercel web deploy, or single-process daemon serving the built web app |
-| 2 | Who owns the agent loop | Anthropic, closed | [Open CoDesign][ocod] itself, via [`pi-ai`][piai] | **The user's existing code agent CLI** (Claude Code, Codex, Cursor Agent, Gemini CLI, OpenCode, OpenClaw); direct Anthropic API as fallback |
+| 1 | Where the product runs | claude.ai only | Local Electron app | **Next.js web app + local daemon + desktop loop** — `pnpm tools-dev`, Vercel web deploy |
+| 2 | Who owns the agent loop | Anthropic, closed | [Open CoDesign][ocod] itself, via [`pi-ai`][piai] | **The user's existing code agent CLI** (Claude Code, Codex, Devin for Terminal, Cursor Agent, Gemini CLI, OpenCode, OpenClaw); direct Anthropic API as fallback |
 | 3 | What "design skills" are | Proprietary internal tools | TypeScript modules baked into the app | **File-based skills** that follow Claude Code's `SKILL.md` spec — forkable, versionable, shareable, installable by symlink |
 | 4 | How design systems are authored | Implicit in prompt | N/A | **`DESIGN.md` files** following the [awesome-claude-design][acd] 9-section schema |
 | 5 | Extension point | Anthropic only | Custom PRs | **Drop a folder into `skills/`** — composable by third parties |
@@ -98,7 +98,7 @@ Module responsibilities:
 - **We do not ship a model router.** If the user's agent supports 20 providers, great. If it only supports Anthropic, that's the ceiling. We don't layer our own provider abstraction on top of someone else's.
 - **We do not ship a desktop app.** No Electron, no Tauri. The "local" story is a Next.js dev server + a Node daemon. If someone wants a tray icon, that's [`cc-switch`][ccsw]'s job, not ours.
 - **We do not reinvent the agent loop.** No custom tool-use harness, no bespoke context-manager. Everything goes through the detected agent's native loop.
-- **We do not maintain a skill marketplace in v1.** Skills are git URLs and local folders. A browseable UI is v2.
+- **We do not maintain a skill marketplace in v1.** Skills are git URLs and local folders. A browsable UI is v2.
 - **We do not try to compete with Figma.** Output is code (HTML/JSX) and content (`DESIGN.md`, Markdown, PPTX), not editable vector canvases.
 - **We do not implement auth / billing / orgs in MVP.** Single-user, single-machine. Multi-user is post-v1 and optional.
 
@@ -126,7 +126,7 @@ In short: Claude Design is a product; OD is a **substrate**.
 
 ## 9. Success criteria for v1
 
-- One developer can `git clone && corepack enable && pnpm install && pnpm dev:all`, point at their Claude Code install, and produce a prototype in under 5 minutes.
+- One developer can `git clone && corepack enable && pnpm install && pnpm tools-dev run web`, point at their Claude Code install, and produce a prototype in under 5 minutes.
 - A third party can author a skill in a separate git repo, publish it, and have a user install it by running `od skill add <git-url>` without touching OD's source.
 - A design system author can write a `DESIGN.md`, point OD at it, and have the style propagate across prototype / deck / template outputs.
 - Deploying to Vercel with a local daemon works end-to-end (the daemon is reachable via localhost tunnel or a user-provided URL).
