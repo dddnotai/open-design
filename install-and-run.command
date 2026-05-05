@@ -16,7 +16,9 @@ PROJECT_DIR="$(pwd)"
 # 自动拉取最新代码（如果是 git 仓库）
 if [ -d .git ]; then
     echo "🔄 检查更新..."
-    git pull --ff-only 2>/dev/null && echo "   已更新到最新版本" || echo "   跳过更新（可能有本地修改）"
+    # 确保 remote 指向正确的仓库
+    git remote set-url origin https://github.com/dddnotai/open-design.git 2>/dev/null || true
+    git pull origin main --ff-only 2>/dev/null && echo "   已更新到最新版本" || echo "   跳过更新（可能有本地修改）"
 fi
 
 # 检查是否已安装 Homebrew
